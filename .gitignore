@@ -1,0 +1,5 @@
+*.[oa]
+*~
+disk.img
+kernel/*.[oa]
+kernel/*.elf
