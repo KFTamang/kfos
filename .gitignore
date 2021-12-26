@@ -3,3 +3,4 @@
 disk.img
 kernel/*.[oa]
 kernel/*.elf
+!kernel/hankaku.o

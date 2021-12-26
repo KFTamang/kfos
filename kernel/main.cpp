@@ -36,8 +36,11 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
         }
     }
 
-    WriteAscii(*pixel_writer, 100, 100, 'A', {0, 0, 0});
-    WriteAscii(*pixel_writer, 110, 100, 'A', {0, 0, 0});
+    for (unsigned char c = 0; c < 64; c++)
+    {
+        WriteAscii(*pixel_writer, 8 * c, 100, c, {0, 0, 0});
+        WriteAscii(*pixel_writer, 8 * c, 116, c + 64, {0, 0, 0});
+    }
 
     while (1)
     {
