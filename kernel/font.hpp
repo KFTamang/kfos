@@ -20,3 +20,4 @@ const uint8_t kfontA[16] = {
     0b11100111};
 
 void WriteAscii(PixelWriter &pixel_writer, int x, int y, char c, const PixelColor &color);
+void WriteString(PixelWriter &pixel_writer, int x, int y, const char *s, const PixelColor &color);
