@@ -3,6 +3,7 @@
 #include <cstdio>
 #include "font.hpp"
 #include "graphics.hpp"
+#include "console.hpp"
 
 char pixel_writer_buf[sizeof(RGBResv8BitPerColorPixelWriter)];
 PixelWriter *pixel_writer;
@@ -29,23 +30,21 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
             pixel_writer->Write(i, j, {255, 255, 255});
         }
     }
-    for (int x = 0; x < 200; x++)
+    for (int x = 0; x < 8 * Console::kColumns; x++)
     {
-        for (int y = 0; y < 100; y++)
+        for (int y = 0; y < 16 * Console::kRows; y++)
         {
-            pixel_writer->Write(x, y, {0, 255, 128});
+            pixel_writer->Write(x, y, {0, 0, 0});
         }
     }
 
-    for (unsigned char c = 0; c < 64; c++)
+    char buf[255];
+    Console console(*pixel_writer, {255, 255, 255}, {10, 10, 10});
+    for (int i = 0; i < 30; i++)
     {
-        WriteAscii(*pixel_writer, 8 * c, 100, c, {0, 0, 0});
-        WriteAscii(*pixel_writer, 8 * c, 116, c + 64, {0, 0, 0});
+        sprintf(buf, "line %d\n", i);
+        console.PutString(buf);
     }
-    char buf[256];
-    sprintf(buf, "1 + 2 = %d", 1 + 2);
-    WriteString(*pixel_writer, 50, 132, "Hello, world!", {0, 0, 0});
-    WriteString(*pixel_writer, 50, 148, buf, {0, 0, 0});
 
     while (1)
     {
