@@ -8,6 +8,21 @@
 char pixel_writer_buf[sizeof(RGBResv8BitPerColorPixelWriter)];
 PixelWriter *pixel_writer;
 
+char console_buf[sizeof(Console)];
+Console *console;
+
+void printk(const char *format, ...)
+{
+    va_list ap;
+    int result;
+    char s[1024];
+
+    va_start(ap, format);
+    result = vsprintf(s, format, ap);
+    va_end(ap);
+    console->PutString(s);
+}
+
 extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
 {
     switch (frame_buffer_config.pixel_format)
@@ -38,12 +53,11 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
         }
     }
 
-    char buf[255];
-    Console console(*pixel_writer, {255, 255, 255}, {10, 10, 10});
+    // allocate global console for printk
+    console = new (console_buf) Console(*pixel_writer, {255, 255, 255}, {10, 10, 10});
     for (int i = 0; i < 30; i++)
     {
-        sprintf(buf, "line %d\n", i);
-        console.PutString(buf);
+        printk("printk line %d\n", i);
     }
 
     while (1)
