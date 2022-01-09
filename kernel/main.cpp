@@ -5,12 +5,15 @@
 #include "graphics.hpp"
 #include "console.hpp"
 
+// pixel drawer definition
 char pixel_writer_buf[sizeof(RGBResv8BitPerColorPixelWriter)];
 PixelWriter *pixel_writer;
 
+// console definition
 char console_buf[sizeof(Console)];
 Console *console;
 
+// printk function for debug
 void printk(const char *format, ...)
 {
     va_list ap;
