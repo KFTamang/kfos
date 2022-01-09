@@ -26,6 +26,51 @@ void printk(const char *format, ...)
     console->PutString(s);
 }
 
+const int kMouseCursorWidth = 15;
+const int kMouseCursorHeight = 24;
+const char mouse_cursor_shape[kMouseCursorHeight][kMouseCursorWidth + 1] = {
+    "@              ",
+    "@@             ",
+    "@.@            ",
+    "@..@           ",
+    "@...@          ",
+    "@....@         ",
+    "@.....@        ",
+    "@......@       ",
+    "@.......@      ",
+    "@........@     ",
+    "@.........@    ",
+    "@..........@   ",
+    "@...........@  ",
+    "@............@ ",
+    "@......@@@@@@@@",
+    "@......@       ",
+    "@...@@..@      ",
+    "@..@  @..@     ",
+    "@.@   @..@     ",
+    "@@     @..@    ",
+    "@      @..@    ",
+    "        @..@   ",
+    "         @@@   "};
+
+void DrawMouseCursor(int x, int y)
+{
+    for (int yy = 0; yy < kMouseCursorHeight; yy++)
+    {
+        for (int xx = 0; xx < kMouseCursorWidth; xx++)
+        {
+            if (mouse_cursor_shape[yy][xx] == '@')
+            {
+                pixel_writer->Write(x + xx, y + yy, {0, 0, 0});
+            }
+            else if (mouse_cursor_shape[yy][xx] == '.')
+            {
+                pixel_writer->Write(x + xx, y + yy, {255, 255, 255});
+            }
+        }
+    }
+}
+
 extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
 {
     switch (frame_buffer_config.pixel_format)
@@ -62,6 +107,8 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
     {
         printk("printk line %d\n", i);
     }
+
+    DrawMouseCursor(100, 200);
 
     while (1)
     {
