@@ -4,6 +4,8 @@
 #include "font.hpp"
 #include "graphics.hpp"
 #include "console.hpp"
+#include "Error.hpp"
+#include "pci.hpp"
 
 // pixel drawer definition
 char pixel_writer_buf[sizeof(RGBResv8BitPerColorPixelWriter)];
@@ -106,6 +108,21 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
     for (int i = 0; i < 30; i++)
     {
         printk("printk line %d\n", i);
+    }
+
+    printk("Welcome to KFOS!\n");
+
+    // List all pci devices
+    auto err = pci::ScanAllBus();
+    printk("ScanAllBus: %s\n", err.Name());
+
+    for (int i = 0; i < 20; i++)
+    {
+        const auto &dev = pci::devices[i];
+        auto vendor_id = pci::ReadVendorId(dev.bus, dev.device, dev.function);
+        auto class_code = pci::ReadClassCode(dev.bus, dev.device, dev.function);
+        printk("%d.%d.%d: vend %04x, class %08x, head %02x\n",
+               dev.bus, dev.device, dev.function, vendor_id, class_code, dev.header_type);
     }
 
     DrawMouseCursor(100, 200);
