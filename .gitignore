@@ -1,6 +1,8 @@
 *.[oa]
+*.d
 *~
 disk.img
 kernel/*.[oa]
 kernel/*.elf
 !kernel/hankaku.o
+kernel/usb/*.[oa]

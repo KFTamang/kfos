@@ -4,10 +4,15 @@
 #include "font.hpp"
 #include "graphics.hpp"
 #include "console.hpp"
-#include "Error.hpp"
+#include "error.hpp"
 #include "pci.hpp"
 #include "mouse.hpp"
 #include "logger.hpp"
+#include "usb/memory.hpp"
+#include "usb/device.hpp"
+#include "usb/classdriver/mouse.hpp"
+#include "usb/xhci/xhci.hpp"
+#include "usb/xhci/trb.hpp"
 
 // pixel drawer definition
 char pixel_writer_buf[sizeof(RGBResv8BitPerColorPixelWriter)];
@@ -125,9 +130,32 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
            xhc_dev->bus, xhc_dev->device, xhc_dev->function);
 
     const WithError<uint64_t> xhc_bar = pci::ReadBar(*xhc_dev, 0);
+    Log(kDebug, "ReadBar: %s\n", xhc_bar.error.Name());
+    const uint64_t xhc_mmio_base = xhc_bar.value & ~static_cast<uint64_t>(0xf);
+    Log(kDebug, "xHC mmio_base = %08lx\n", xhc_mmio_base);
+
+    usb::xhci::Controller xhc{xhc_mmio_base};
+
+    if (0x8086 == pci::ReadVendorId(*xhc_dev))
+    {
+        SwitchEhci2Xhci(*xhc_dev);
+    }
+    {
+        auto err = xhc.Initialize();
+        Log(kDebug, "xhc.Initialize() : %s\n", err.Name());
+    }
+
+    Log(kDebug, "xHC starting\n");
+    xhc.Run();
 
     while (1)
     {
         __asm__("hlt");
     }
+}
+
+extern "C" void __cxa_pure_virtual()
+{
+    while (1)
+        __asm__("hlt");
 }

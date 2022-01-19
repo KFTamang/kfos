@@ -1,6 +1,6 @@
 #include <cstdint>
 #include <array>
-#include "Error.hpp"
+#include "error.hpp"
 
 namespace pci
 {
