@@ -9,6 +9,7 @@ public:
         kSuccess,
         kFull,
         kEmpty,
+        kIndexOutOfRange,
         kLastOfCode,
     };
 
@@ -25,11 +26,21 @@ public:
     }
 
 private:
-    static constexpr std::array<const char *, 3> code_names_ = {
+    static constexpr std::array<const char *, 4> code_names_ = {
         "kSuccess",
         "kFull",
         "kEmpty",
+        "kIndexOutOfRange",
     };
 
     Code code_;
+};
+
+#define MAKE_ERROR(code) Error((code))
+
+template <class T>
+struct WithError
+{
+    T value;
+    Error error;
 };

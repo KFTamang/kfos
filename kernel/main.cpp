@@ -6,6 +6,8 @@
 #include "console.hpp"
 #include "Error.hpp"
 #include "pci.hpp"
+#include "mouse.hpp"
+#include "logger.hpp"
 
 // pixel drawer definition
 char pixel_writer_buf[sizeof(RGBResv8BitPerColorPixelWriter)];
@@ -14,6 +16,9 @@ PixelWriter *pixel_writer;
 // console definition
 char console_buf[sizeof(Console)];
 Console *console;
+
+char mouse_cursor_buf[sizeof(MouseCursor)];
+MouseCursor *mouse_cursor;
 
 // printk function for debug
 void printk(const char *format, ...)
@@ -28,49 +33,36 @@ void printk(const char *format, ...)
     console->PutString(s);
 }
 
-const int kMouseCursorWidth = 15;
-const int kMouseCursorHeight = 24;
-const char mouse_cursor_shape[kMouseCursorHeight][kMouseCursorWidth + 1] = {
-    "@              ",
-    "@@             ",
-    "@.@            ",
-    "@..@           ",
-    "@...@          ",
-    "@....@         ",
-    "@.....@        ",
-    "@......@       ",
-    "@.......@      ",
-    "@........@     ",
-    "@.........@    ",
-    "@..........@   ",
-    "@...........@  ",
-    "@............@ ",
-    "@......@@@@@@@@",
-    "@......@       ",
-    "@...@@..@      ",
-    "@..@  @..@     ",
-    "@.@   @..@     ",
-    "@@     @..@    ",
-    "@      @..@    ",
-    "        @..@   ",
-    "         @@@   "};
-
-void DrawMouseCursor(int x, int y)
+void MouseObserver(int8_t displacement_x, int8_t displacement_y)
 {
-    for (int yy = 0; yy < kMouseCursorHeight; yy++)
+    mouse_cursor->MoveRelative({displacement_x, displacement_y});
+}
+// #@@range_end(mouse_observer)
+
+// #@@range_begin(switch_echi2xhci)
+void SwitchEhci2Xhci(const pci::Device &xhc_dev)
+{
+    bool intel_ehc_exist = false;
+    for (int i = 0; i < pci::num_device; ++i)
     {
-        for (int xx = 0; xx < kMouseCursorWidth; xx++)
+        if (pci::devices[i].class_code.Match(0x0cu, 0x03u, 0x20u) /* EHCI */ &&
+            0x8086 == pci::ReadVendorId(pci::devices[i]))
         {
-            if (mouse_cursor_shape[yy][xx] == '@')
-            {
-                pixel_writer->Write(x + xx, y + yy, {0, 0, 0});
-            }
-            else if (mouse_cursor_shape[yy][xx] == '.')
-            {
-                pixel_writer->Write(x + xx, y + yy, {255, 255, 255});
-            }
+            intel_ehc_exist = true;
+            break;
         }
     }
+    if (!intel_ehc_exist)
+    {
+        return;
+    }
+
+    uint32_t superspeed_ports = pci::ReadConfReg(xhc_dev, 0xdc); // USB3PRM
+    pci::WriteConfReg(xhc_dev, 0xd8, superspeed_ports);          // USB3_PSSEN
+    uint32_t ehci2xhci_ports = pci::ReadConfReg(xhc_dev, 0xd4);  // XUSB2PRM
+    pci::WriteConfReg(xhc_dev, 0xd0, ehci2xhci_ports);           // XUSB2PR
+    Log(kDebug, "SwitchEhci2Xhci: SS = %02, xHCI = %02x\n",
+        superspeed_ports, ehci2xhci_ports);
 }
 
 extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
@@ -116,16 +108,23 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
     auto err = pci::ScanAllBus();
     printk("ScanAllBus: %s\n", err.Name());
 
-    for (int i = 0; i < 20; i++)
+    // search for xhc device
+    pci::Device *xhc_dev = nullptr;
+    for (int i = 0; i < pci::num_device; i++)
     {
-        const auto &dev = pci::devices[i];
-        auto vendor_id = pci::ReadVendorId(dev.bus, dev.device, dev.function);
-        auto class_code = pci::ReadClassCode(dev.bus, dev.device, dev.function);
-        printk("%d.%d.%d: vend %04x, class %08x, head %02x\n",
-               dev.bus, dev.device, dev.function, vendor_id, class_code, dev.header_type);
+        if (pci::devices[i].class_code.Match(0x0cu, 0x3u, 0x30u))
+        {
+            xhc_dev = &pci::devices[i];
+            if (0x8086 == pci::ReadVendorId(*xhc_dev))
+            {
+                break;
+            }
+        }
     }
+    printk("xHC device found. %d.%d.%d\n",
+           xhc_dev->bus, xhc_dev->device, xhc_dev->function);
 
-    DrawMouseCursor(100, 200);
+    const WithError<uint64_t> xhc_bar = pci::ReadBar(*xhc_dev, 0);
 
     while (1)
     {
