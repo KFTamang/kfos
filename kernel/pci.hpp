@@ -26,7 +26,10 @@ namespace pci
         ClassCode class_code;
     };
     uint16_t ReadVendorId(uint8_t bus, uint8_t device, uint8_t function);
-    uint16_t ReadVendorId(Device &device);
+    inline uint16_t ReadVendorId(const Device &device)
+    {
+        return ReadVendorId(device.bus, device.device, device.function);
+    };
     uint16_t ReadDeviceId(uint8_t bus, uint8_t device, uint8_t function);
     uint8_t ReadHeaderType(uint8_t bus, uint8_t device, uint8_t function);
     ClassCode ReadClassCode(uint8_t bus, uint8_t device, uint8_t function);

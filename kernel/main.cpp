@@ -14,6 +14,9 @@
 #include "usb/xhci/xhci.hpp"
 #include "usb/xhci/trb.hpp"
 
+const PixelColor kDesktopBGColor{45, 118, 237};
+const PixelColor kDesktopFGColor{255, 255, 255};
+
 // pixel drawer definition
 char pixel_writer_buf[sizeof(RGBResv8BitPerColorPixelWriter)];
 PixelWriter *pixel_writer;
@@ -72,6 +75,8 @@ void SwitchEhci2Xhci(const pci::Device &xhc_dev)
 
 extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
 {
+    SetLogLevel(kError);
+
     switch (frame_buffer_config.pixel_format)
     {
     case kPixelRGBResv8BitPerColor:
@@ -85,29 +90,34 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
     default:
         break;
     }
-    for (uint64_t i = 0; i < frame_buffer_config.horizontal_resolution; i++)
-    {
-        for (uint64_t j = 0; j < frame_buffer_config.vertical_resolution; j++)
-        {
-            pixel_writer->Write(i, j, {255, 255, 255});
-        }
-    }
-    for (int x = 0; x < 8 * Console::kColumns; x++)
-    {
-        for (int y = 0; y < 16 * Console::kRows; y++)
-        {
-            pixel_writer->Write(x, y, {0, 0, 0});
-        }
-    }
+
+    const int kFrameWidth = frame_buffer_config.horizontal_resolution;
+    const int kFrameHeight = frame_buffer_config.vertical_resolution;
+
+    FillRectangle(*pixel_writer,
+                  {0, 0},
+                  {kFrameWidth, kFrameHeight - 50},
+                  kDesktopBGColor);
+    FillRectangle(*pixel_writer,
+                  {0, kFrameHeight - 50},
+                  {kFrameWidth, 50},
+                  {1, 8, 17});
+    FillRectangle(*pixel_writer,
+                  {0, kFrameHeight - 50},
+                  {kFrameWidth / 5, 50},
+                  {80, 80, 80});
+    DrawRectangle(*pixel_writer,
+                  {10, kFrameHeight - 40},
+                  {30, 30},
+                  {160, 160, 160});
 
     // allocate global console for printk
-    console = new (console_buf) Console(*pixel_writer, {255, 255, 255}, {10, 10, 10});
-    for (int i = 0; i < 30; i++)
-    {
-        printk("printk line %d\n", i);
-    }
+    console = new (console_buf) Console(*pixel_writer, kDesktopFGColor, kDesktopBGColor);
 
     printk("Welcome to KFOS!\n");
+
+    mouse_cursor = new (mouse_cursor_buf) MouseCursor{
+        pixel_writer, kDesktopBGColor, {300, 200}};
 
     // List all pci devices
     auto err = pci::ScanAllBus();
@@ -148,9 +158,31 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
     Log(kDebug, "xHC starting\n");
     xhc.Run();
 
+    usb::HIDMouseDriver::default_observer = MouseObserver;
+
+    for (int i = 1; i <= xhc.MaxPorts(); ++i)
+    {
+        auto port = xhc.PortAt(i);
+        Log(kDebug, "Port %d: IsConnected=%d\n", i, port.IsConnected());
+
+        if (port.IsConnected())
+        {
+            if (auto err = ConfigurePort(xhc, port))
+            {
+                Log(kError, "failed to configure port: %s at %s:%d\n",
+                    err.Name(), err.File(), err.Line());
+                continue;
+            }
+        }
+    }
+
     while (1)
     {
-        __asm__("hlt");
+        if (auto err = ProcessEvent(xhc))
+        {
+            Log(kError, "Error while ProcessEvent: %s at %s:%d\n",
+                err.Name(), err.File(), err.Line());
+        }
     }
 }
 

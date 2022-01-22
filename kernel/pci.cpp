@@ -47,11 +47,6 @@ namespace pci
         return (ret & 0xffffu) >> 0;
     }
 
-    uint16_t ReadVendorId(Device &device)
-    {
-        return ReadVendorId(device.bus, device.device, device.function);
-    }
-
     uint16_t ReadDeviceId(uint8_t bus, uint8_t device, uint8_t function)
     {
         uint32_t addr = GenerateAddress(bus, device, function, 0x00u);
@@ -97,12 +92,12 @@ namespace pci
     {
         if (num_device == devices.size())
         {
-            return Error::kFull;
+            return MAKE_ERROR(Error::kFull);
         }
         auto class_code = ReadClassCode(bus, device, function);
         devices[num_device] = Device{bus, device, function, header_type, class_code};
         num_device++;
-        return Error::kSuccess;
+        return MAKE_ERROR(Error::kSuccess);
     }
 
     Error ScanFunction(uint8_t bus, uint8_t device, uint8_t function)
@@ -123,7 +118,7 @@ namespace pci
             return ScanBus(secondary_bus);
         }
 
-        return Error::kSuccess;
+        return MAKE_ERROR(Error::kSuccess);
     }
 
     Error ScanDevice(uint8_t bus, uint8_t device)
@@ -134,7 +129,7 @@ namespace pci
         }
         if (IsSingleFunctionDevice(ReadHeaderType(bus, device, 0)))
         {
-            return Error::kSuccess;
+            return MAKE_ERROR(Error::kSuccess);
         }
         for (uint8_t function = 1; function < 8; function++)
         {
@@ -147,7 +142,7 @@ namespace pci
                 return err;
             }
         }
-        return Error::kSuccess;
+        return MAKE_ERROR(Error::kSuccess);
     }
 
     Error ScanBus(uint8_t bus)
@@ -164,7 +159,7 @@ namespace pci
                 return err;
             }
         }
-        return Error::kSuccess;
+        return MAKE_ERROR(Error::kSuccess);
     }
 
     Error ScanAllBus()
@@ -188,7 +183,7 @@ namespace pci
                 return err;
             }
         }
-        return Error::kSuccess;
+        return MAKE_ERROR(Error::kSuccess);
     }
 
     uint32_t ReadConfReg(const Device &dev, uint8_t reg_addr)
