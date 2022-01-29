@@ -1,114 +1,57 @@
+/**
+ * @file pci.cpp
+ *
+ * PCI バス制御のプログラムを集めたファイル．
+ */
+
 #include "pci.hpp"
+
 #include "asmfunc.h"
-#include <cstdint>
 
-namespace pci
+namespace
 {
+    using namespace pci;
 
-    bool ClassCode::Match(uint8_t _base, uint8_t _sub)
+    /** @brief CONFIG_ADDRESS 用の 32 ビット整数を生成する */
+    uint32_t MakeAddress(uint8_t bus, uint8_t device,
+                         uint8_t function, uint8_t reg_addr)
     {
-        return (base == _base) && (sub == _sub);
-    }
-
-    bool ClassCode::Match(uint8_t _base, uint8_t _sub, uint8_t _interface)
-    {
-        return (base == _base) && (sub == _sub) && (interface == _interface);
-    }
-
-    uint32_t GenerateAddress(uint8_t bus, uint8_t device, uint8_t function, uint8_t register_offset)
-    {
-        auto shl = [](uint32_t x, uint8_t shift)
+        auto shl = [](uint32_t x, unsigned int bits)
         {
-            return x << shift;
+            return x << bits;
         };
-        return shl(1, 31) | shl(bus, 16) | shl(device, 11) | shl(function, 7) | (register_offset & 0xfcu);
+
+        return shl(1, 31) // enable bit
+               | shl(bus, 16) | shl(device, 11) | shl(function, 8) | (reg_addr & 0xfcu);
     }
 
-    void WriteAddress(uint32_t address)
-    {
-        IoOut32(kConfigAddress, address);
-    }
-
-    void WriteData(uint32_t data)
-    {
-        IoOut32(kConfigData, data);
-    }
-
-    uint32_t ReadData()
-    {
-        return IoIn32(kConfigData);
-    }
-
-    uint16_t ReadVendorId(uint8_t bus, uint8_t device, uint8_t function)
-    {
-        uint32_t addr = GenerateAddress(bus, device, function, 0x00u);
-        WriteAddress(addr);
-        uint32_t ret = ReadData();
-        return (ret & 0xffffu) >> 0;
-    }
-
-    uint16_t ReadDeviceId(uint8_t bus, uint8_t device, uint8_t function)
-    {
-        uint32_t addr = GenerateAddress(bus, device, function, 0x00u);
-        WriteAddress(addr);
-        uint32_t ret = ReadData();
-        return ret >> 16;
-    }
-
-    uint8_t ReadHeaderType(uint8_t bus, uint8_t device, uint8_t function)
-    {
-        uint32_t addr = GenerateAddress(bus, device, function, 0x0cu);
-        WriteAddress(addr);
-        uint32_t ret = ReadData();
-        return (ret & 0x0f00u) >> 16;
-    }
-
-    ClassCode ReadClassCode(uint8_t bus, uint8_t device, uint8_t function)
-    {
-        uint32_t addr = GenerateAddress(bus, device, function, 0x08u);
-        WriteAddress(addr);
-        uint32_t ret = ReadData();
-        uint8_t base = (ret >> 24) & 0xffu;
-        uint8_t sub = (ret >> 16) & 0xffu;
-        uint8_t interface = (ret >> 8) & 0xffu;
-        ClassCode cc{base, sub, interface};
-        return cc;
-    }
-
-    uint32_t ReadBusNumbers(uint8_t bus, uint8_t device, uint8_t function)
-    {
-        uint32_t addr = GenerateAddress(bus, device, function, 0x18u);
-        WriteAddress(addr);
-        uint32_t ret = ReadData();
-        return ret;
-    }
-
-    bool IsSingleFunctionDevice(uint8_t header_type)
-    {
-        return (header_type & 0x80u) == 0;
-    }
-
-    Error AddDevice(uint8_t bus, uint8_t device, uint8_t function, uint8_t header_type)
+    /** @brief devices[num_device] に情報を書き込み num_device をインクリメントする． */
+    Error AddDevice(const Device &device)
     {
         if (num_device == devices.size())
         {
             return MAKE_ERROR(Error::kFull);
         }
-        auto class_code = ReadClassCode(bus, device, function);
-        devices[num_device] = Device{bus, device, function, header_type, class_code};
-        num_device++;
+
+        devices[num_device] = device;
+        ++num_device;
         return MAKE_ERROR(Error::kSuccess);
     }
 
+    Error ScanBus(uint8_t bus);
+
+    /** @brief 指定のファンクションを devices に追加する．
+   * もし PCI-PCI ブリッジなら，セカンダリバスに対し ScanBus を実行する
+   */
     Error ScanFunction(uint8_t bus, uint8_t device, uint8_t function)
     {
+        auto class_code = ReadClassCode(bus, device, function);
         auto header_type = ReadHeaderType(bus, device, function);
-        if (auto err = AddDevice(bus, device, function, header_type))
+        Device dev{bus, device, function, header_type, class_code};
+        if (auto err = AddDevice(dev))
         {
             return err;
         }
-
-        auto class_code = ReadClassCode(bus, device, function);
 
         if (class_code.Match(0x06u, 0x04u))
         {
@@ -121,6 +64,9 @@ namespace pci
         return MAKE_ERROR(Error::kSuccess);
     }
 
+    /** @brief 指定のデバイス番号の各ファンクションをスキャンする．
+   * 有効なファンクションを見つけたら ScanFunction を実行する．
+   */
     Error ScanDevice(uint8_t bus, uint8_t device)
     {
         if (auto err = ScanFunction(bus, device, 0))
@@ -131,7 +77,8 @@ namespace pci
         {
             return MAKE_ERROR(Error::kSuccess);
         }
-        for (uint8_t function = 1; function < 8; function++)
+
+        for (uint8_t function = 1; function < 8; ++function)
         {
             if (ReadVendorId(bus, device, function) == 0xffffu)
             {
@@ -145,21 +92,172 @@ namespace pci
         return MAKE_ERROR(Error::kSuccess);
     }
 
+    /** @brief 指定のバス番号の各デバイスをスキャンする．
+   * 有効なデバイスを見つけたら ScanDevice を実行する．
+   */
     Error ScanBus(uint8_t bus)
     {
-        for (uint8_t device = 0; device < 32; device++)
+        for (uint8_t device = 0; device < 32; ++device)
         {
             if (ReadVendorId(bus, device, 0) == 0xffffu)
             {
                 continue;
             }
-
             if (auto err = ScanDevice(bus, device))
             {
                 return err;
             }
         }
         return MAKE_ERROR(Error::kSuccess);
+    }
+
+    /** @brief 指定された MSI ケーパビリティ構造を読み取る
+   *
+   * @param dev  MSI ケーパビリティを読み込む PCI デバイス
+   * @param cap_addr  MSI ケーパビリティレジスタのコンフィグレーション空間アドレス
+   */
+    MSICapability ReadMSICapability(const Device &dev, uint8_t cap_addr)
+    {
+        MSICapability msi_cap{};
+
+        msi_cap.header.data = ReadConfReg(dev, cap_addr);
+        msi_cap.msg_addr = ReadConfReg(dev, cap_addr + 4);
+
+        uint8_t msg_data_addr = cap_addr + 8;
+        if (msi_cap.header.bits.addr_64_capable)
+        {
+            msi_cap.msg_upper_addr = ReadConfReg(dev, cap_addr + 8);
+            msg_data_addr = cap_addr + 12;
+        }
+
+        msi_cap.msg_data = ReadConfReg(dev, msg_data_addr);
+
+        if (msi_cap.header.bits.per_vector_mask_capable)
+        {
+            msi_cap.mask_bits = ReadConfReg(dev, msg_data_addr + 4);
+            msi_cap.pending_bits = ReadConfReg(dev, msg_data_addr + 8);
+        }
+
+        return msi_cap;
+    }
+
+    /** @brief 指定された MSI ケーパビリティ構造に書き込む
+   *
+   * @param dev  MSI ケーパビリティを読み込む PCI デバイス
+   * @param cap_addr  MSI ケーパビリティレジスタのコンフィグレーション空間アドレス
+   * @param msi_cap  書き込む値
+   */
+    void WriteMSICapability(const Device &dev, uint8_t cap_addr,
+                            const MSICapability &msi_cap)
+    {
+        WriteConfReg(dev, cap_addr, msi_cap.header.data);
+        WriteConfReg(dev, cap_addr + 4, msi_cap.msg_addr);
+
+        uint8_t msg_data_addr = cap_addr + 8;
+        if (msi_cap.header.bits.addr_64_capable)
+        {
+            WriteConfReg(dev, cap_addr + 8, msi_cap.msg_upper_addr);
+            msg_data_addr = cap_addr + 12;
+        }
+
+        WriteConfReg(dev, msg_data_addr, msi_cap.msg_data);
+
+        if (msi_cap.header.bits.per_vector_mask_capable)
+        {
+            WriteConfReg(dev, msg_data_addr + 4, msi_cap.mask_bits);
+            WriteConfReg(dev, msg_data_addr + 8, msi_cap.pending_bits);
+        }
+    }
+
+    /** @brief 指定された MSI レジスタを設定する */
+    Error ConfigureMSIRegister(const Device &dev, uint8_t cap_addr,
+                               uint32_t msg_addr, uint32_t msg_data,
+                               unsigned int num_vector_exponent)
+    {
+        auto msi_cap = ReadMSICapability(dev, cap_addr);
+
+        if (msi_cap.header.bits.multi_msg_capable <= num_vector_exponent)
+        {
+            msi_cap.header.bits.multi_msg_enable =
+                msi_cap.header.bits.multi_msg_capable;
+        }
+        else
+        {
+            msi_cap.header.bits.multi_msg_enable = num_vector_exponent;
+        }
+
+        msi_cap.header.bits.msi_enable = 1;
+        msi_cap.msg_addr = msg_addr;
+        msi_cap.msg_data = msg_data;
+
+        WriteMSICapability(dev, cap_addr, msi_cap);
+        return MAKE_ERROR(Error::kSuccess);
+    }
+
+    /** @brief 指定された MSI レジスタを設定する */
+    Error ConfigureMSIXRegister(const Device &dev, uint8_t cap_addr,
+                                uint32_t msg_addr, uint32_t msg_data,
+                                unsigned int num_vector_exponent)
+    {
+        return MAKE_ERROR(Error::kNotImplemented);
+    }
+}
+
+namespace pci
+{
+    void WriteAddress(uint32_t address)
+    {
+        IoOut32(kConfigAddress, address);
+    }
+
+    void WriteData(uint32_t value)
+    {
+        IoOut32(kConfigData, value);
+    }
+
+    uint32_t ReadData()
+    {
+        return IoIn32(kConfigData);
+    }
+
+    uint16_t ReadVendorId(uint8_t bus, uint8_t device, uint8_t function)
+    {
+        WriteAddress(MakeAddress(bus, device, function, 0x00));
+        return ReadData() & 0xffffu;
+    }
+
+    uint16_t ReadDeviceId(uint8_t bus, uint8_t device, uint8_t function)
+    {
+        WriteAddress(MakeAddress(bus, device, function, 0x00));
+        return ReadData() >> 16;
+    }
+
+    uint8_t ReadHeaderType(uint8_t bus, uint8_t device, uint8_t function)
+    {
+        WriteAddress(MakeAddress(bus, device, function, 0x0c));
+        return (ReadData() >> 16) & 0xffu;
+    }
+
+    ClassCode ReadClassCode(uint8_t bus, uint8_t device, uint8_t function)
+    {
+        WriteAddress(MakeAddress(bus, device, function, 0x08));
+        auto reg = ReadData();
+        ClassCode cc;
+        cc.base = (reg >> 24) & 0xffu;
+        cc.sub = (reg >> 16) & 0xffu;
+        cc.interface = (reg >> 8) & 0xffu;
+        return cc;
+    }
+
+    uint32_t ReadBusNumbers(uint8_t bus, uint8_t device, uint8_t function)
+    {
+        WriteAddress(MakeAddress(bus, device, function, 0x18));
+        return ReadData();
+    }
+
+    bool IsSingleFunctionDevice(uint8_t header_type)
+    {
+        return (header_type & 0x80u) == 0;
     }
 
     Error ScanAllBus()
@@ -171,13 +269,13 @@ namespace pci
         {
             return ScanBus(0);
         }
-        for (uint8_t function = 1; function < 8; function++)
+
+        for (uint8_t function = 0; function < 8; ++function)
         {
             if (ReadVendorId(0, 0, function) == 0xffffu)
             {
                 continue;
             }
-
             if (auto err = ScanBus(function))
             {
                 return err;
@@ -188,13 +286,13 @@ namespace pci
 
     uint32_t ReadConfReg(const Device &dev, uint8_t reg_addr)
     {
-        WriteAddress(GenerateAddress(dev.bus, dev.device, dev.function, reg_addr));
+        WriteAddress(MakeAddress(dev.bus, dev.device, dev.function, reg_addr));
         return ReadData();
     }
 
     void WriteConfReg(const Device &dev, uint8_t reg_addr, uint32_t value)
     {
-        WriteAddress(GenerateAddress(dev.bus, dev.device, dev.function, reg_addr));
+        WriteAddress(MakeAddress(dev.bus, dev.device, dev.function, reg_addr));
         WriteData(value);
     }
 
@@ -226,4 +324,54 @@ namespace pci
             MAKE_ERROR(Error::kSuccess)};
     }
 
-};
+    CapabilityHeader ReadCapabilityHeader(const Device &dev, uint8_t addr)
+    {
+        CapabilityHeader header;
+        header.data = pci::ReadConfReg(dev, addr);
+        return header;
+    }
+
+    Error ConfigureMSI(const Device &dev, uint32_t msg_addr, uint32_t msg_data,
+                       unsigned int num_vector_exponent)
+    {
+        uint8_t cap_addr = ReadConfReg(dev, 0x34) & 0xffu;
+        uint8_t msi_cap_addr = 0, msix_cap_addr = 0;
+        while (cap_addr != 0)
+        {
+            auto header = ReadCapabilityHeader(dev, cap_addr);
+            if (header.bits.cap_id == kCapabilityMSI)
+            {
+                msi_cap_addr = cap_addr;
+            }
+            else if (header.bits.cap_id == kCapabilityMSIX)
+            {
+                msix_cap_addr = cap_addr;
+            }
+            cap_addr = header.bits.next_ptr;
+        }
+
+        if (msi_cap_addr)
+        {
+            return ConfigureMSIRegister(dev, msi_cap_addr, msg_addr, msg_data, num_vector_exponent);
+        }
+        else if (msix_cap_addr)
+        {
+            return ConfigureMSIXRegister(dev, msix_cap_addr, msg_addr, msg_data, num_vector_exponent);
+        }
+        return MAKE_ERROR(Error::kNoPCIMSI);
+    }
+
+    Error ConfigureMSIFixedDestination(
+        const Device &dev, uint8_t apic_id,
+        MSITriggerMode trigger_mode, MSIDeliveryMode delivery_mode,
+        uint8_t vector, unsigned int num_vector_exponent)
+    {
+        uint32_t msg_addr = 0xfee00000u | (apic_id << 12);
+        uint32_t msg_data = (static_cast<uint32_t>(delivery_mode) << 8) | vector;
+        if (trigger_mode == MSITriggerMode::kLevel)
+        {
+            msg_data |= 0xc000;
+        }
+        return ConfigureMSI(dev, msg_addr, msg_data, num_vector_exponent);
+    }
+}

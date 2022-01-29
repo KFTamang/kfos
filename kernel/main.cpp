@@ -1,6 +1,9 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
+
+#include <numeric>
+
 #include "font.hpp"
 #include "graphics.hpp"
 #include "console.hpp"
@@ -13,6 +16,9 @@
 #include "usb/classdriver/mouse.hpp"
 #include "usb/xhci/xhci.hpp"
 #include "usb/xhci/trb.hpp"
+#include "interrupt.hpp"
+#include "queue.hpp"
+#include "asmfunc.h"
 
 const PixelColor kDesktopBGColor{45, 118, 237};
 const PixelColor kDesktopFGColor{255, 255, 255};
@@ -73,6 +79,24 @@ void SwitchEhci2Xhci(const pci::Device &xhc_dev)
         superspeed_ports, ehci2xhci_ports);
 }
 
+usb::xhci::Controller *xhc;
+
+// #@@range_begin(queue_message)
+struct Message
+{
+    enum Type
+    {
+        kInterruptXHCI,
+    } type;
+};
+
+ArrayQueue<Message> *main_queue;
+__attribute__((interrupt)) void IntHandlerXHCI(InterruptFrame *frame)
+{
+    main_queue->Push(Message{Message::kInterruptXHCI});
+    NotifyEndOfInterrupt();
+}
+
 extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
 {
     SetLogLevel(kError);
@@ -119,6 +143,10 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
     mouse_cursor = new (mouse_cursor_buf) MouseCursor{
         pixel_writer, kDesktopBGColor, {300, 200}};
 
+    std::array<Message, 32> main_queue_data;
+    ArrayQueue<Message> main_queue{main_queue_data};
+    ::main_queue = &main_queue;
+
     // List all pci devices
     auto err = pci::ScanAllBus();
     printk("ScanAllBus: %s\n", err.Name());
@@ -139,6 +167,18 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
     printk("xHC device found. %d.%d.%d\n",
            xhc_dev->bus, xhc_dev->device, xhc_dev->function);
 
+    const uint16_t cs = GetCS();
+    SetIDTEntry(idt[InterruptVector::kXHCI], MakeIDTAttr(DescriptorType::kInterruptGate, 0),
+                reinterpret_cast<uint64_t>(IntHandlerXHCI), cs);
+    LoadIDT(sizeof(idt) - 1, reinterpret_cast<uintptr_t>(&idt[0]));
+
+    const uint8_t bsp_local_apic_id =
+        *reinterpret_cast<const uint32_t *>(0xfee00020) >> 24;
+    pci::ConfigureMSIFixedDestination(
+        *xhc_dev, bsp_local_apic_id,
+        pci::MSITriggerMode::kLevel, pci::MSIDeliveryMode::kFixed,
+        InterruptVector::kXHCI, 0);
+
     const WithError<uint64_t> xhc_bar = pci::ReadBar(*xhc_dev, 0);
     Log(kDebug, "ReadBar: %s\n", xhc_bar.error.Name());
     const uint64_t xhc_mmio_base = xhc_bar.value & ~static_cast<uint64_t>(0xf);
@@ -157,6 +197,8 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
 
     Log(kDebug, "xHC starting\n");
     xhc.Run();
+
+    ::xhc = &xhc;
 
     usb::HIDMouseDriver::default_observer = MouseObserver;
 
@@ -178,10 +220,33 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
 
     while (1)
     {
-        if (auto err = ProcessEvent(xhc))
+        // #@@range_begin(get_front_message)
+        __asm__("cli");
+        if (main_queue.Count() == 0)
         {
-            Log(kError, "Error while ProcessEvent: %s at %s:%d\n",
-                err.Name(), err.File(), err.Line());
+            __asm__("sti\n\thlt");
+            continue;
+        }
+
+        Message msg = main_queue.Front();
+        main_queue.Pop();
+        __asm__("sti");
+        // #@@range_end(get_front_message)
+
+        switch (msg.type)
+        {
+        case Message::kInterruptXHCI:
+            while (xhc.PrimaryEventRing()->HasFront())
+            {
+                if (auto err = ProcessEvent(xhc))
+                {
+                    Log(kError, "Error while ProcessEvent: %s at %s:%d\n",
+                        err.Name(), err.File(), err.Line());
+                }
+            }
+            break;
+        default:
+            Log(kError, "Unknown message type: %d\n", msg.type);
         }
     }
 }
