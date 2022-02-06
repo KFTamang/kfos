@@ -19,6 +19,7 @@
 #include "interrupt.hpp"
 #include "queue.hpp"
 #include "asmfunc.h"
+#include "memory_map.hpp"
 
 const PixelColor kDesktopBGColor{45, 118, 237};
 const PixelColor kDesktopFGColor{255, 255, 255};
@@ -97,7 +98,7 @@ __attribute__((interrupt)) void IntHandlerXHCI(InterruptFrame *frame)
     NotifyEndOfInterrupt();
 }
 
-extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
+extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config, const MemoryMap &memmap)
 {
     SetLogLevel(kError);
 
